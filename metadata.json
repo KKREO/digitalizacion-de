@@ -1,0 +1,10 @@
+{
+  "name": "DocuDigit",
+  "description": "Digitaliza tus documentos y fotos en español con IA (Gemini) para obtener datos estructurados y limpios.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
