@@ -41,8 +41,8 @@ function getCleanModel(val?: string, fallback: string = "gemini-3.5-flash"): str
   return val.startsWith("models/") ? val.substring(7) : val;
 }
 
-// Primary extraction endpoint
-app.post('/api/extract', async (req, res) => {
+// Primary extraction endpoint (supports both /api/extract and rewritten /extract)
+app.post(['/api/extract', '/extract'], async (req, res) => {
   try {
     const { fileBase64, mimeType } = req.body;
     if (!fileBase64 || !mimeType) {
@@ -129,8 +129,8 @@ app.post('/api/extract', async (req, res) => {
   }
 });
 
-// Assistant Chat Endpoint
-app.post('/api/assistant/chat', async (req, res) => {
+// Assistant Chat Endpoint (supports both /api/assistant/chat and rewritten /assistant/chat)
+app.post(['/api/assistant/chat', '/assistant/chat'], async (req, res) => {
   try {
     const { document, messages } = req.body;
     if (!document) {
@@ -211,13 +211,13 @@ Mantén tus respuestas profesionales, claras y al grano en idioma ESPAÑOL. Usa 
   }
 });
 
-// Static or Vite setup depending on environment
-if (process.env.NODE_ENV === 'production') {
+// Static or Vite setup depending on environment (disable static file serving on serverless Vercel)
+if (process.env.NODE_ENV === 'production' && !process.env.VERCEL) {
   app.use(express.static(path.join(__dirname, 'dist')));
   app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'dist', 'index.html'));
   });
-} else {
+} else if (!process.env.VERCEL) {
   // ESM import metadata compatibility
   const { createServer: createViteServer } = await import('vite');
   const vite = await createViteServer({
