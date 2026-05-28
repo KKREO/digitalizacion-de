@@ -53,7 +53,88 @@ export default function App() {
     setError(null);
   };
 
-  const fileToBase64 = (f: File): Promise<string> => {
+  const optimizeImageAndGetBase64 = (f: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(f);
+      reader.onload = () => {
+        const dataUrl = reader.result?.toString();
+        if (!dataUrl) {
+          reject(new Error('Fallo al leer la imagen'));
+          return;
+        }
+
+        const img = new Image();
+        img.src = dataUrl;
+        img.onload = () => {
+          try {
+            const canvas = document.createElement('canvas');
+            let width = img.width;
+            let height = img.height;
+
+            const MAX_DIM = 2000;
+            if (width > MAX_DIM || height > MAX_DIM) {
+              if (width > height) {
+                height = Math.round((height * MAX_DIM) / width);
+                width = MAX_DIM;
+              } else {
+                width = Math.round((width * MAX_DIM) / height);
+                height = MAX_DIM;
+              }
+            }
+
+            canvas.width = width;
+            canvas.height = height;
+
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+              ctx.drawImage(img, 0, 0, width, height);
+              // Compressed JPEG to decrease body payload weight massively (often to < 600KB)
+              const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.85);
+              const base64Str = compressedDataUrl.split(',')[1];
+              resolve(base64Str);
+            } else {
+              const base64Str = dataUrl.split(',')[1];
+              resolve(base64Str);
+            }
+          } catch (err) {
+            console.warn('Canvas compression failed, falling back to original:', err);
+            const base64Str = dataUrl.split(',')[1];
+            resolve(base64Str);
+          }
+        };
+        img.onerror = () => {
+          const base64Str = dataUrl.split(',')[1];
+          resolve(base64Str);
+        };
+      };
+      reader.onerror = (err) => reject(err);
+    });
+  };
+
+  const fileToBase64 = async (f: File): Promise<string> => {
+    // Check for PDF size restriction on Vercel (approx 3.2MB max to secure under 4.5MB base64 payload size)
+    if (f.type === 'application/pdf') {
+      const MAX_PDF_SIZE_MB = 3.2;
+      const fSizeMB = f.size / (1024 * 1024);
+      if (fSizeMB > MAX_PDF_SIZE_MB) {
+        throw new Error(
+          `El archivo PDF es demasiado grande (${fSizeMB.toFixed(1)} MB). ` +
+          `Vercel Serverless limita el payload total a 4.5 MB. ` +
+          `Por favor, sube un PDF de menor tamaño (menos de 3.2 MB) o sube capturas de imagen.`
+        );
+      }
+    }
+
+    if (f.type.startsWith('image/')) {
+      toast.info('Optimizando imagen para procesamiento rápido...');
+      try {
+        return await optimizeImageAndGetBase64(f);
+      } catch (err) {
+        console.warn('No se pudo optimizar la imagen:', err);
+      }
+    }
+
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.readAsDataURL(f);

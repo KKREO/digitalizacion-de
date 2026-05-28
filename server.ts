@@ -14,15 +14,25 @@ const port = 3000;
 
 app.use(express.json({ limit: '50mb' }));
 
-// Init Gemini client with aistudio-build telemetry header
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
-  httpOptions: {
-    headers: {
-      'User-Agent': 'aistudio-build',
+// Lazy init Gemini client with aistudio-build telemetry header
+let aiClient: GoogleGenAI | null = null;
+function getGeminiClient(): GoogleGenAI {
+  if (!aiClient) {
+    const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
+    if (!apiKey) {
+      throw new Error('La variable de entorno GEMINI_API_KEY es requerida. Por favor, asegúrate de configurarla en los ajustes de Vercel.');
     }
+    aiClient = new GoogleGenAI({
+      apiKey: apiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        }
+      }
+    });
   }
-});
+  return aiClient;
+}
 
 // Clean and sanitize the configured model string, bypassing any invalid env placeholders (e.g. "API" or key prefixes)
 function getCleanModel(val?: string, fallback: string = "gemini-3.5-flash"): string {
@@ -41,8 +51,8 @@ function getCleanModel(val?: string, fallback: string = "gemini-3.5-flash"): str
   return val.startsWith("models/") ? val.substring(7) : val;
 }
 
-// Primary extraction endpoint (supports both /api/extract and rewritten /extract)
-app.post(['/api/extract', '/extract'], async (req, res) => {
+// Primary extraction endpoint (matches any path ending with extract)
+app.post(/.*extract$/, async (req, res) => {
   try {
     const { fileBase64, mimeType } = req.body;
     if (!fileBase64 || !mimeType) {
@@ -74,6 +84,7 @@ app.post(['/api/extract', '/extract'], async (req, res) => {
     2. No inventes datos. Si algo no es legible o no existe, no lo incluyas en 'details'.
     3. Devuelve únicamente el objeto JSON válido. Sin explicaciones adicionales alrededor, sin bloques de código markdown de tipo json (no uses \`\`\`json).`;
 
+    const ai = getGeminiClient();
     const response = await ai.models.generateContent({
       model: finalModel,
       contents: [
@@ -129,8 +140,8 @@ app.post(['/api/extract', '/extract'], async (req, res) => {
   }
 });
 
-// Assistant Chat Endpoint (supports both /api/assistant/chat and rewritten /assistant/chat)
-app.post(['/api/assistant/chat', '/assistant/chat'], async (req, res) => {
+// Assistant Chat Endpoint (matches any path ending with chat)
+app.post(/.*chat$/, async (req, res) => {
   try {
     const { document, messages } = req.body;
     if (!document) {
@@ -180,6 +191,7 @@ Mantén tus respuestas profesionales, claras y al grano en idioma ESPAÑOL. Usa 
       });
     }
 
+    const ai = getGeminiClient();
     const response = await ai.models.generateContent({
       model: finalModel,
       contents: formattedContents,
