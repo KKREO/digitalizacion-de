@@ -38,6 +38,25 @@ app.post('/api/extract', async (req, res) => {
 
     console.log(`Digitalizando documento con el modelo: ${finalModel}`);
 
+    const systemPrompt = `Eres un experto en extracción e interpretación de información de documentos y digitalización inteligente.
+    Analiza cuidadosamente la imagen o PDF adjunto y extrae TODO su contenido de manera estructurada en idioma ESPAÑOL.
+    
+    El resultado DEBE ser devuelto estrictamente como un objeto JSON con el siguiente formato:
+    {
+      "title": "Un título descriptivo y claro para el documento (ej: Factura de Iberdrola, DNI de Juan Pérez, Ticket StarBucks)",
+      "summary": "Un resumen ejecutivo corto (1 o 2 oraciones) de lo que trata el documento.",
+      "details": [
+        { "label": "Nombre del campo", "value": "Valor extraído" },
+        { "label": "Otro campo relevante", "value": "Su respectivo valor informativo" }
+      ],
+      "rawMarkdown": "Todo el documento formateado elegantemente en Markdown en idioma ESPAÑOL. Organiza la información usando tablas, negritas, listas o secciones según corresponda para que sea fácil de leer y copiar."
+    }
+
+    INSTRUCCIONES IMPORTANTES:
+    1. Extrae todos los datos que identifiques (fechas, nombres, montos, impuestos, firmas, números de identificación, direcciones, etc.).
+    2. No inventes datos. Si algo no es legible o no existe, no lo incluyas en 'details'.
+    3. Devuelve únicamente el objeto JSON válido. Sin explicaciones adicionales alrededor, sin bloques de código markdown de tipo json (no uses \`\`\`json).`;
+
     const response = await ai.models.generateContent({
       model: finalModel,
       contents: [
@@ -48,24 +67,7 @@ app.post('/api/extract', async (req, res) => {
           },
         },
         {
-          text: `Eres un experto en extracción e interpretación de información de documentos y digitalización inteligente.
-          Analiza cuidadosamente la imagen o PDF adjunto y extrae TODO su contenido de manera estructurada en idioma ESPAÑOL.
-          
-          El resultado DEBE ser devuelto estrictamente como un objeto JSON con el siguiente formato:
-          {
-            "title": "Un título descriptivo y claro para el documento (ej: Factura de Iberdrola, DNI de Juan Pérez, Ticket StarBucks)",
-            "summary": "Un resumen ejecutivo corto (1 o 2 oraciones) de lo que trata el documento.",
-            "details": [
-              { "label": "Nombre del campo", "value": "Valor extraído" },
-              { "label": "Otro campo relevante", "value": "Su respectivo valor informativo" }
-            ],
-            "rawMarkdown": "Todo el documento formateado elegantemente en Markdown en idioma ESPAÑOL. Organiza la información usando tablas, negritas, listas o secciones según corresponda para que sea fácil de leer y copiar."
-          }
-
-          INSTRUCCIONES IMPORTANTES:
-          1. Extrae todos los datos que identifiques (fechas, nombres, montos, impuestos, firmas, números de identificación, direcciones, etc.).
-          2. No inventes datos. Si algo no es legible o no existe, no lo incluyas en 'details'.
-          3. Devuelve únicamente el objeto JSON válido. Sin explicaciones adicionales alrededor, sin bloques de código markdown de tipo json (no uses \`\`\`json).`,
+          text: systemPrompt,
         },
       ],
       config: {
@@ -88,7 +90,20 @@ app.post('/api/extract', async (req, res) => {
       parsedData = JSON.parse(cleaned);
     }
 
-    return res.json(parsedData);
+    // Extract token usage metadata safely
+    const usage = response.usageMetadata || (response as any).usage_metadata || {};
+    const tokenStats = {
+      promptTokens: usage.promptTokenCount || (usage as any).prompt_token_count || 0,
+      completionTokens: usage.candidatesTokenCount || (usage as any).candidates_token_count || (usage as any).completion_token_count || 0,
+      totalTokens: usage.totalTokenCount || (usage as any).total_token_count || 0
+    };
+
+    // Return extended document model
+    return res.json({
+      ...parsedData,
+      promptSent: `[Archivo Adjunto: ${mimeType}]\n\n${systemPrompt}`,
+      tokenStats: tokenStats
+    });
   } catch (error: any) {
     console.error("Error en digitalización de Gemini:", error);
     return res.status(500).json({ 

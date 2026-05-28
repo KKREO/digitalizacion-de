@@ -9,6 +9,12 @@ export interface ExtractedData {
   summary: string;
   details: { label: string; value: string }[];
   rawMarkdown: string;
+  promptSent?: string;
+  tokenStats?: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+  };
 }
 
 interface HistorySidebarProps {
