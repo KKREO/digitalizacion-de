@@ -74,7 +74,7 @@ export function FileUploader({ onFileSelect, isLoading }: FileUploaderProps) {
               Arrastra tu archivo aquí o elige una opción
             </p>
             <p className="text-xs text-slate-400 mt-1">
-              Soporta imágenes (JPG, PNG) y documentos PDF (máx. 2.5 MB para Vercel)
+              Soporta imágenes (JPG, PNG) y documentos PDF (máx. 2.0 MB para PDFs en Vercel)
             </p>
           </div>
 

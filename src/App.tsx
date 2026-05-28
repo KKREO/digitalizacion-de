@@ -54,13 +54,13 @@ export default function App() {
 
     // Early validation when file is selected so the user gets immediate feedback
     if (selectedFile.type === 'application/pdf') {
-      const MAX_PDF_SIZE_MB = 2.5;
+      const MAX_PDF_SIZE_MB = 2.0;
       const fSizeMB = selectedFile.size / (1024 * 1024);
       if (fSizeMB > MAX_PDF_SIZE_MB) {
         setError(
           `El archivo PDF es demasiado grande (${fSizeMB.toFixed(1)} MB). ` +
-          `Vercel Serverless limita el payload de envío a 4.5 MB. ` +
-          `Por favor, selecciona un PDF de menor tamaño (máximo 2.5 MB) o sube capturas de imagen.`
+          `Vercel Serverless limita el payload de envío a 4.5 MB (en Base64). ` +
+          `Por favor, selecciona un PDF de menor tamaño (máximo 2.0 MB) o sube capturas de imagen.`
         );
         toast.error('Archivo PDF demasiado grande');
       }
@@ -141,13 +141,13 @@ export default function App() {
   const fileToBase64 = async (f: File): Promise<string> => {
     // Check for PDF size restriction on Vercel (approx 2.5MB max to secure under 4.5MB base64 payload size)
     if (f.type === 'application/pdf') {
-      const MAX_PDF_SIZE_MB = 2.5;
+      const MAX_PDF_SIZE_MB = 2.0;
       const fSizeMB = f.size / (1024 * 1024);
       if (fSizeMB > MAX_PDF_SIZE_MB) {
         throw new Error(
           `El archivo PDF es demasiado grande (${fSizeMB.toFixed(1)} MB). ` +
           `Vercel Serverless limita el envío total a 4.5 MB. ` +
-          `Por favor, sube un PDF de menor tamaño (máximo 2.5 MB) o sube capturas de imagen.`
+          `Por favor, sube un PDF de menor tamaño (máximo 2.0 MB) o sube capturas de imagen.`
         );
       }
     }
@@ -190,15 +190,27 @@ export default function App() {
     try {
       const base64 = await fileToBase64(file);
       
+      // Calculate actual request payload size in characters (1 character = 1 byte in standard base64/JSON payload)
+      const payloadString = JSON.stringify({
+        fileBase64: base64,
+        mimeType: file.type,
+      });
+      const payloadSizeInMB = payloadString.length / (1024 * 1024);
+
+      if (payloadSizeInMB > 4.2) {
+        throw new Error(
+          `El archivo procesado (${payloadSizeInMB.toFixed(1)} MB después de codificar en Base64) supera el límite de transferencia. ` +
+          `Vercel Serverless bloquea de forma absoluta cualquier petición de más de 4.5 MB. ` +
+          `Por favor, reduce la resolución del archivo o selecciona un documento PDF más pequeño (máximo 2.0 MB para PDFs).`
+        );
+      }
+      
       const response = await fetch('/api/extract', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          fileBase64: base64,
-          mimeType: file.type,
-        }),
+        body: payloadString,
       });
 
       if (!response.ok) {
@@ -207,7 +219,7 @@ export default function App() {
           throw new Error(
             'El archivo procesado es demasiado grande para ser enviado. ' +
             'Vercel Serverless tiene un límite absoluto de 4.5 MB para las peticiones. ' +
-            'Por favor, utiliza una imagen o PDF de menor tamaño (máximo 2.5 MB).'
+            'Por favor, utiliza una imagen o PDF de menor tamaño (máximo 2.0 MB).'
           );
         }
         const errJson = await response.json().catch(() => ({}));
@@ -228,7 +240,7 @@ export default function App() {
     } catch (err: any) {
       console.error('Error durante la extracción:', err);
       setError(err.message || 'No se pudo digitalizar el documento. Inténtalo de nuevo.');
-      toast.error('Hubo un error al procesar el archivo');
+      toast.error(err.message || 'Hubo un error al procesar el archivo');
     } finally {
       setIsLoading(false);
     }
