@@ -51,6 +51,30 @@ export default function App() {
   const handleFileSelect = (selectedFile: File) => {
     setFile(selectedFile);
     setError(null);
+
+    // Early validation when file is selected so the user gets immediate feedback
+    if (selectedFile.type === 'application/pdf') {
+      const MAX_PDF_SIZE_MB = 2.5;
+      const fSizeMB = selectedFile.size / (1024 * 1024);
+      if (fSizeMB > MAX_PDF_SIZE_MB) {
+        setError(
+          `El archivo PDF es demasiado grande (${fSizeMB.toFixed(1)} MB). ` +
+          `Vercel Serverless limita el payload de envío a 4.5 MB. ` +
+          `Por favor, selecciona un PDF de menor tamaño (máximo 2.5 MB) o sube capturas de imagen.`
+        );
+        toast.error('Archivo PDF demasiado grande');
+      }
+    } else if (selectedFile.type.startsWith('image/')) {
+      const MAX_IMAGE_SIZE_MB = 10;
+      const fSizeMB = selectedFile.size / (1024 * 1024);
+      if (fSizeMB > MAX_IMAGE_SIZE_MB) {
+        setError(
+          `La imagen seleccionada es demasiado grande (${fSizeMB.toFixed(1)} MB). ` +
+          `Por favor, sube una imagen de menor tamaño (máximo 10 MB) para poder optimizarla adecuadamente.`
+        );
+        toast.error('Imagen demasiado grande');
+      }
+    }
   };
 
   const optimizeImageAndGetBase64 = (f: File): Promise<string> => {
@@ -72,7 +96,9 @@ export default function App() {
             let width = img.width;
             let height = img.height;
 
-            const MAX_DIM = 2000;
+            // Using 1500px maximum dimension instead of 2000px keeps OCR accuracy exceptionally high 
+            // while drastically reducing the footprint, avoiding potential 413 errors on serverless.
+            const MAX_DIM = 1500;
             if (width > MAX_DIM || height > MAX_DIM) {
               if (width > height) {
                 height = Math.round((height * MAX_DIM) / width);
@@ -89,8 +115,8 @@ export default function App() {
             const ctx = canvas.getContext('2d');
             if (ctx) {
               ctx.drawImage(img, 0, 0, width, height);
-              // Compressed JPEG to decrease body payload weight massively (often to < 600KB)
-              const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.85);
+              // Compressed JPEG at 0.75 quality to dramatically optimization weight (to typically 100KB-300KB)
+              const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.75);
               const base64Str = compressedDataUrl.split(',')[1];
               resolve(base64Str);
             } else {
@@ -113,15 +139,15 @@ export default function App() {
   };
 
   const fileToBase64 = async (f: File): Promise<string> => {
-    // Check for PDF size restriction on Vercel (approx 3.2MB max to secure under 4.5MB base64 payload size)
+    // Check for PDF size restriction on Vercel (approx 2.5MB max to secure under 4.5MB base64 payload size)
     if (f.type === 'application/pdf') {
-      const MAX_PDF_SIZE_MB = 3.2;
+      const MAX_PDF_SIZE_MB = 2.5;
       const fSizeMB = f.size / (1024 * 1024);
       if (fSizeMB > MAX_PDF_SIZE_MB) {
         throw new Error(
           `El archivo PDF es demasiado grande (${fSizeMB.toFixed(1)} MB). ` +
-          `Vercel Serverless limita el payload total a 4.5 MB. ` +
-          `Por favor, sube un PDF de menor tamaño (menos de 3.2 MB) o sube capturas de imagen.`
+          `Vercel Serverless limita el envío total a 4.5 MB. ` +
+          `Por favor, sube un PDF de menor tamaño (máximo 2.5 MB) o sube capturas de imagen.`
         );
       }
     }
@@ -153,6 +179,11 @@ export default function App() {
       return;
     }
 
+    if (error) {
+      toast.error('Por favor, resuelve los errores del archivo seleccionado');
+      return;
+    }
+
     setIsLoading(true);
     setError(null);
 
@@ -171,6 +202,14 @@ export default function App() {
       });
 
       if (!response.ok) {
+        // Intercept Vercel 413 Payload Too Large error
+        if (response.status === 413) {
+          throw new Error(
+            'El archivo procesado es demasiado grande para ser enviado. ' +
+            'Vercel Serverless tiene un límite absoluto de 4.5 MB para las peticiones. ' +
+            'Por favor, utiliza una imagen o PDF de menor tamaño (máximo 2.5 MB).'
+          );
+        }
         const errJson = await response.json().catch(() => ({}));
         throw new Error(errJson.error || 'Error con el servicio de digitalización');
       }
