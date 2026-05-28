@@ -1,6 +1,6 @@
 import ReactMarkdown from 'react-markdown';
-import { Copy, Download, FileText, Table, Check, Cpu, Terminal } from 'lucide-react';
-import { useState } from 'react';
+import { Copy, Download, FileText, Table, Check, Cpu, Terminal, MessageSquare, Send, Sparkles, Trash2, Bot, User, RefreshCw, Volume2, Play, Pause, Square, Headphones, HelpCircle } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
 import { toast } from 'sonner';
 
 export interface ExtractedData {
@@ -22,9 +22,269 @@ interface DataViewProps {
   data: ExtractedData;
 }
 
+interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: number;
+}
+
 export function DataView({ data }: DataViewProps) {
-  const [activeTab, setActiveTab] = useState<'structured' | 'markdown' | 'token-stats'>('structured');
+  const [activeTab, setActiveTab] = useState<'structured' | 'markdown' | 'token-stats' | 'assistant'>('structured');
   const [copied, setCopied] = useState(false);
+
+  // Audio Speech Synthesis / Narrator State
+  const [isVoiceSupported, setIsVoiceSupported] = useState(false);
+  const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [selectedVoice, setSelectedVoice] = useState<string>('');
+  const [isPlayingVoice, setIsPlayingVoice] = useState(false);
+  const [isPausedVoice, setIsPausedVoice] = useState(false);
+  const [voiceRate, setVoiceRate] = useState<number>(1.0);
+  const [narrationMode, setNarrationMode] = useState<'summary' | 'detailed' | 'all'>('summary');
+  const voiceUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+
+  // Initialize SpeechSynthesis on mount
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      setIsVoiceSupported(true);
+      
+      const loadAllVoices = () => {
+        const list = window.speechSynthesis.getVoices();
+        // Filter Spanish voices
+        const esList = list.filter(v => v.lang.toLowerCase().startsWith('es'));
+        setAvailableVoices(esList.length > 0 ? esList : list);
+        
+        // Auto select a smart default voice
+        if (esList.length > 0) {
+          const naturalOrGoogleEs = esList.find(
+            v => v.name.toLowerCase().includes('google') || v.name.toLowerCase().includes('natural')
+          ) || esList[0];
+          setSelectedVoice(naturalOrGoogleEs.name);
+        } else if (list.length > 0) {
+          setSelectedVoice(list[0].name);
+        }
+      };
+
+      loadAllVoices();
+      
+      // Some browsers load voices asynchronously
+      if (window.speechSynthesis.onvoiceschanged !== undefined) {
+        window.speechSynthesis.onvoiceschanged = loadAllVoices;
+      }
+
+      return () => {
+        window.speechSynthesis.cancel();
+      };
+    }
+  }, []);
+
+  // Cancel any speech immediately if document changes
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+      setIsPlayingVoice(false);
+      setIsPausedVoice(false);
+    }
+  }, [data]);
+
+  const compileNarrationText = () => {
+    let script = `Visualizando documento digitalizado: ${data.title}. `;
+    if (narrationMode === 'summary') {
+      script += `Resumen ejecutivo: ${data.summary}`;
+    } else if (narrationMode === 'detailed') {
+      script += `Resumen general: ${data.summary}.  A continuación se detallan los datos estructurados extraídos de la tabla: `;
+      if (data.details && data.details.length > 0) {
+        data.details.forEach(item => {
+          script += `Clave: ${item.label}. Valor extraído: ${item.value}.  `;
+        });
+      } else {
+        script += "No se hallaron campos estructurados adicionales en el documento.";
+      }
+    } else {
+      script += `Resumen general: ${data.summary}. Contenido e información extendida en formato texto: ${data.rawMarkdown}`;
+    }
+    return script;
+  };
+
+  const handleStartSpeaking = () => {
+    if (!isVoiceSupported) {
+      toast.error('La síntesis de voz no está soportada o disponible en este navegador.');
+      return;
+    }
+
+    if (isPausedVoice) {
+      window.speechSynthesis.resume();
+      setIsPausedVoice(false);
+      setIsPlayingVoice(true);
+      return;
+    }
+
+    window.speechSynthesis.cancel();
+
+    const scriptText = compileNarrationText();
+    const utt = new SpeechSynthesisUtterance(scriptText);
+    
+    const allGenVoices = window.speechSynthesis.getVoices();
+    const chosenVoice = allGenVoices.find(v => v.name === selectedVoice);
+    if (chosenVoice) {
+      utt.voice = chosenVoice;
+    }
+    
+    utt.rate = voiceRate;
+
+    utt.onend = () => {
+      setIsPlayingVoice(false);
+      setIsPausedVoice(false);
+    };
+
+    utt.onerror = (e) => {
+      if (e.error !== 'interrupted') {
+        console.error('Speech synthesis utterance error:', e);
+        setIsPlayingVoice(false);
+        setIsPausedVoice(false);
+      }
+    };
+
+    voiceUtteranceRef.current = utt;
+    setIsPlayingVoice(true);
+    setIsPausedVoice(false);
+    
+    window.speechSynthesis.speak(utt);
+    toast.success('Iniciando reproducción de voz...');
+  };
+
+  const handlePauseSpeaking = () => {
+    if (isPlayingVoice && !isPausedVoice) {
+      window.speechSynthesis.pause();
+      setIsPausedVoice(true);
+      toast.info('Lectura pausada');
+    }
+  };
+
+  const handleStopSpeaking = () => {
+    window.speechSynthesis.cancel();
+    setIsPlayingVoice(false);
+    setIsPausedVoice(false);
+    toast.info('Lectura detenida');
+  };
+
+  // Chat Assistant state
+  const [chatHistories, setChatHistories] = useState<Record<string, ChatMessage[]>>(() => {
+    try {
+      const saved = localStorage.getItem('docudigit_chats_v1');
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  const [inputVal, setInputVal] = useState('');
+  const [isAssistantLoading, setIsAssistantLoading] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll to bottom of chat
+  useEffect(() => {
+    if (activeTab === 'assistant') {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [chatHistories, activeTab]);
+
+  // Sync chats to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('docudigit_chats_v1', JSON.stringify(chatHistories));
+    } catch (e) {
+      console.error(e);
+    }
+  }, [chatHistories]);
+
+  const activeDocId = data.id || 'temp';
+  const activeDocMessages = chatHistories[activeDocId] || [];
+
+  const handleSendChatMessage = async (textToSend: string) => {
+    if (!textToSend.trim() || isAssistantLoading) return;
+
+    const userMsg: ChatMessage = {
+      id: crypto.randomUUID(),
+      role: 'user',
+      content: textToSend,
+      timestamp: Date.now()
+    };
+
+    const updatedMessages = [...activeDocMessages, userMsg];
+    setChatHistories(prev => ({
+      ...prev,
+      [activeDocId]: updatedMessages
+    }));
+    setInputVal('');
+    setIsAssistantLoading(true);
+
+    try {
+      const response = await fetch('/api/assistant/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          document: {
+            title: data.title,
+            summary: data.summary,
+            details: data.details,
+            rawMarkdown: data.rawMarkdown
+          },
+          messages: updatedMessages.map(m => ({
+            role: m.role,
+            content: m.content
+          }))
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('Error al consultar al asistente');
+      }
+
+      const body = await response.json();
+      
+      const assistantMsg: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: body.reply,
+        timestamp: Date.now()
+      };
+
+      setChatHistories(prev => ({
+        ...prev,
+        [activeDocId]: [...updatedMessages, assistantMsg]
+      }));
+
+      if (body.tokenStats) {
+        toast.info(`Asistente respondió - Consumo: ${body.tokenStats.totalTokens} tokens`);
+      }
+    } catch (err: any) {
+      console.error(err);
+      toast.error('Hubo un error al comunicarse con el asistente.');
+      const errorMsg: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: '⚠️ No pude contestar en este momento. Por favor verifica tu conexión o vuelve a intentarlo más tarde.',
+        timestamp: Date.now()
+      };
+      setChatHistories(prev => ({
+        ...prev,
+        [activeDocId]: [...updatedMessages, errorMsg]
+      }));
+    } finally {
+      setIsAssistantLoading(false);
+    }
+  };
+
+  const clearChatHistory = () => {
+    setChatHistories(prev => ({
+      ...prev,
+      [activeDocId]: []
+    }));
+    toast.success('Conversación de este documento borrada');
+  };
 
   const copyToClipboard = () => {
     navigator.clipboard.writeText(data.rawMarkdown);
@@ -229,6 +489,139 @@ export function DataView({ data }: DataViewProps) {
         </div>
       </div>
 
+      {/* Narrador de Voz Inteligente (Text-To-Speech Player) */}
+      {isVoiceSupported && (
+        <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 flex flex-col lg:flex-row lg:items-center justify-between gap-4 transition-all">
+          <div className="flex items-center gap-3">
+            {/* Audio Wave / State Indicator */}
+            <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-indigo-50 border border-indigo-100/60 text-indigo-600 shrink-0">
+              {isPlayingVoice && !isPausedVoice ? (
+                <div className="flex items-end gap-1 h-5 px-1">
+                  <span className="w-0.5 bg-indigo-600 rounded-full animate-bounce [animation-duration:0.6s]" style={{ height: '70%' }}></span>
+                  <span className="w-0.5 bg-indigo-600 rounded-full animate-bounce [animation-duration:1.0s]" style={{ height: '100%' }}></span>
+                  <span className="w-0.5 bg-indigo-400 rounded-full animate-bounce [animation-duration:0.8s]" style={{ height: '40%' }}></span>
+                  <span className="w-0.5 bg-indigo-600 rounded-full animate-bounce [animation-duration:0.7s]" style={{ height: '80%' }}></span>
+                </div>
+              ) : (
+                <Volume2 className="w-5 h-5 text-indigo-500" />
+              )}
+            </div>
+            
+            <div className="space-y-0.5">
+              <h4 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                Narrador por Voz DocuDigit
+                {isPlayingVoice && (
+                  <span className="px-2 py-0.5 text-[8px] bg-indigo-100 text-indigo-800 font-extrabold rounded-full tracking-wider uppercase animate-pulse">
+                    {isPausedVoice ? 'En Pausa' : 'Reproduciendo...'}
+                  </span>
+                )}
+              </h4>
+              <p className="text-[10px] text-slate-500">
+                Escucha el resumen o la transcripción completa del documento digitalizado.
+              </p>
+            </div>
+          </div>
+
+          {/* Config Controls */}
+          <div className="flex flex-wrap items-center gap-4 text-xs">
+            {/* Scope selection */}
+            <div className="flex flex-col gap-1">
+              <span className="text-[9px] uppercase font-bold tracking-wider text-slate-400">¿Qué deseas escuchar?</span>
+              <select
+                value={narrationMode}
+                onChange={(e) => {
+                  setNarrationMode(e.target.value as any);
+                  if (isPlayingVoice) {
+                    toast.info('Se aplicará el nuevo contenido seleccionado para la siguiente lectura');
+                  }
+                }}
+                className="bg-white border border-slate-200 text-slate-700 rounded-lg px-2.5 py-1 text-xs outline-none focus:border-indigo-300 focus:ring-1 focus:ring-indigo-100 cursor-pointer transition-all font-semibold"
+              >
+                <option value="summary">Resumen Ejecutivo</option>
+                <option value="detailed">Resumen + Ficha de Datos</option>
+                <option value="all">Documento Completo Narrado</option>
+              </select>
+            </div>
+
+            {/* Vocal Accent / Voice selection */}
+            {availableVoices.length > 0 && (
+              <div className="flex flex-col gap-1">
+                <span className="text-[9px] uppercase font-bold tracking-wider text-slate-400">Voz y Acento</span>
+                <select
+                  value={selectedVoice}
+                  onChange={(e) => {
+                    setSelectedVoice(e.target.value);
+                    if (isPlayingVoice) {
+                      toast.info('La nueva voz se aplicará para la siguiente lectura');
+                    }
+                  }}
+                  className="bg-white border border-slate-200 text-slate-700 rounded-lg px-2.5 py-1 text-xs outline-none focus:border-indigo-300 focus:ring-1 focus:ring-indigo-100 cursor-pointer transition-all font-semibold max-w-[180px] truncate"
+                >
+                  {availableVoices.map((voice) => (
+                    <option key={voice.name} value={voice.name}>
+                      {voice.name.replace('Microsoft', 'MS').replace('Google', '')} ({voice.lang})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Reading Speed */}
+            <div className="flex flex-col gap-0.5">
+              <span className="text-[9px] uppercase font-bold tracking-wider text-slate-400 flex justify-between gap-2">
+                <span>Velocidad</span>
+                <span className="text-indigo-600 font-extrabold">{voiceRate.toFixed(1)}x</span>
+              </span>
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="range"
+                  min="0.6"
+                  max="1.8"
+                  step="0.1"
+                  value={voiceRate}
+                  onChange={(e) => setVoiceRate(parseFloat(e.target.value))}
+                  className="w-20 accent-indigo-600 h-1 bg-slate-200 rounded-lg cursor-pointer"
+                />
+              </div>
+            </div>
+
+            {/* Player Buttons */}
+            <div className="flex items-center gap-1.5 lg:ml-2">
+              {!isPlayingVoice || isPausedVoice ? (
+                <button
+                  type="button"
+                  onClick={handleStartSpeaking}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl cursor-pointer shadow-sm shadow-indigo-100 transition-all text-xs"
+                >
+                  <Play className="w-3.5 h-3.5 fill-current" />
+                  <span>Escuchar</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handlePauseSpeaking}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-xl cursor-pointer shadow-sm shadow-amber-100 transition-all text-xs"
+                >
+                  <Pause className="w-3.5 h-3.5 fill-current" />
+                  <span>Pausar</span>
+                </button>
+              )}
+
+              {isPlayingVoice && (
+                <button
+                  type="button"
+                  onClick={handleStopSpeaking}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 font-bold rounded-xl cursor-pointer transition-all text-xs"
+                >
+                  <Square className="w-3.5 h-3.5 fill-current text-slate-500" />
+                  <span>Detener</span>
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Tabs list switcher */}
       <div className="flex border-b border-slate-100 pb-px gap-1 overflow-x-auto">
         <button
@@ -265,6 +658,22 @@ export function DataView({ data }: DataViewProps) {
         >
           <Cpu className="w-4 h-4 text-indigo-500" />
           Consumo y Prompt
+        </button>
+
+        <button
+          onClick={() => setActiveTab('assistant')}
+          className={`flex items-center gap-2 pb-3 px-4 font-bold text-xs uppercase tracking-wider transition-all border-b-2 cursor-pointer shrink-0 relative ${
+            activeTab === 'assistant'
+              ? 'border-indigo-600 text-indigo-600 font-extrabold'
+              : 'border-transparent text-slate-400 hover:text-slate-600'
+          }`}
+        >
+          <Sparkles className="w-4 h-4 text-amber-500" />
+          Asistente de Consulta
+          <span className="absolute top-1 right-2 flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
+          </span>
         </button>
       </div>
 
@@ -348,6 +757,168 @@ export function DataView({ data }: DataViewProps) {
                 {data.promptSent || 'No hay prompt registrado para esta digitalización previa.'}
               </div>
             </div>
+          </div>
+        )}
+
+        {activeTab === 'assistant' && (
+          <div className="flex flex-col h-[500px] border border-slate-150 rounded-2xl bg-slate-50 overflow-hidden">
+            {/* Assistant Chat Header */}
+            <div className="bg-white border-b border-slate-100 px-4 py-3 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg">
+                  <Bot className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-800">Asistente Inteligente DocuDigit</h3>
+                  <p className="text-[10px] text-slate-400">Analizando el documento actual</p>
+                </div>
+              </div>
+              
+              {activeDocMessages.length > 0 && (
+                <button
+                  type="button"
+                  onClick={clearChatHistory}
+                  title="Borrar conversación"
+                  className="p-1.5 hover:bg-rose-50 text-slate-400 hover:text-rose-600 rounded-lg cursor-pointer transition-all border-none"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+
+            {/* Chat Messages */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              {activeDocMessages.length === 0 ? (
+                <div className="h-full flex flex-col items-center justify-center text-center p-6 space-y-4">
+                  <div className="p-3 bg-indigo-50 border border-indigo-100 rounded-2xl animate-bounce text-indigo-600">
+                    <Sparkles className="w-8 h-8" />
+                  </div>
+                  <div className="space-y-1 max-w-sm">
+                    <p className="text-sm font-extrabold text-slate-800">¡Hola! Soy tu asistente de DocuDigit</p>
+                    <p className="text-xs text-slate-500 leading-relaxed">
+                      Pregúntame cualquier dato sobre <strong>{data.title}</strong>. Puedo calcular subtotales, resumir cláusulas, buscar nombres, fechas o contrastar datos.
+                    </p>
+                  </div>
+
+                  {/* Suggestion Chips */}
+                  <div className="flex flex-wrap justify-center gap-2 pt-2 max-w-md">
+                    {[
+                      { text: '📝 Hazme un resumen detallado', label: 'Resumen' },
+                      { text: '💰 ¿Hay montos, precios o totales?', label: 'Analizar montos' },
+                      { text: '📅 ¿Qué fechas importantes contiene?', label: 'Fechas clave' },
+                      { text: '🔎 ¿Quiénes son los firmantes o clientes?', label: 'Buscar firmantes' }
+                    ].map((chip, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => handleSendChatMessage(chip.text)}
+                        className="px-3 py-1.5 bg-white hover:bg-indigo-50 border border-slate-200 hover:border-indigo-300 text-slate-700 hover:text-indigo-700 text-xs font-semibold rounded-xl transition-all shadow-sm cursor-pointer"
+                      >
+                        {chip.text}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {/* Fixed initial welcoming bubble */}
+                  <div className="flex items-start gap-2.5 max-w-[85%]">
+                    <div className="w-7 h-7 rounded-lg bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600 shrink-0">
+                      <Bot className="w-4 h-4" />
+                    </div>
+                    <div className="bg-white border border-slate-150 p-3 rounded-2xl rounded-tl-none shadow-sm space-y-1">
+                      <span className="text-[10px] uppercase font-bold text-slate-400">Asistente DocuDigit</span>
+                      <p className="text-xs text-slate-700 leading-relaxed">
+                        He estudiado el documento <strong>{data.title}</strong>. ¿Qué deseas saber o verificar sobre él?
+                      </p>
+                    </div>
+                  </div>
+
+                  {activeDocMessages.map((msg) => {
+                    const isUser = msg.role === 'user';
+                    return (
+                      <div
+                        key={msg.id}
+                        className={`flex items-start gap-2.5 max-w-[85%] ${
+                          isUser ? 'ml-auto flex-row-reverse' : ''
+                        }`}
+                      >
+                        <div
+                          className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
+                            isUser
+                              ? 'bg-slate-200 text-slate-700'
+                              : 'bg-indigo-50 border border-indigo-100 text-indigo-600'
+                          }`}
+                        >
+                          {isUser ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
+                        </div>
+                        <div
+                          className={`p-3 rounded-2xl shadow-sm space-y-1 ${
+                            isUser
+                              ? 'bg-slate-900 text-slate-50 rounded-tr-none'
+                              : 'bg-white border border-slate-150 rounded-tl-none text-slate-800'
+                          }`}
+                        >
+                          <span
+                            className={`text-[9px] uppercase font-bold tracking-wider block ${
+                              isUser ? 'text-indigo-300 text-right' : 'text-slate-400'
+                            }`}
+                          >
+                            {isUser ? 'Tú' : 'Asistente'}
+                          </span>
+                          <div className={`text-xs leading-relaxed prose prose-sm max-w-none ${isUser ? 'text-slate-100' : 'text-slate-700'}`}>
+                            <ReactMarkdown>{msg.content}</ReactMarkdown>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              
+              {isAssistantLoading && (
+                <div className="flex items-start gap-2.5 max-w-[85%] animate-pulse">
+                  <div className="w-7 h-7 rounded-lg bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600 shrink-0">
+                    <RefreshCw className="w-4 h-4 animate-spin text-indigo-500" />
+                  </div>
+                  <div className="bg-white border border-slate-150 p-3 rounded-2xl rounded-tl-none shadow-sm">
+                    <span className="text-[10px] uppercase font-bold text-slate-400 block">Pensando</span>
+                    <div className="flex gap-1 py-1">
+                      <span className="h-2 w-2 bg-indigo-400 rounded-full animate-bounce"></span>
+                      <span className="h-2 w-2 bg-indigo-400 rounded-full animate-bounce [animation-delay:0.2s]"></span>
+                      <span className="h-2 w-2 bg-indigo-400 rounded-full animate-bounce [animation-delay:0.4s]"></span>
+                    </div>
+                  </div>
+                </div>
+              )}
+              <div ref={messagesEndRef} />
+            </div>
+
+            {/* Chat Input Bar */}
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleSendChatMessage(inputVal);
+              }}
+              className="bg-white border-t border-slate-100 p-3 flex gap-2 items-center"
+            >
+              <input
+                type="text"
+                value={inputVal}
+                onChange={(e) => setInputVal(e.target.value)}
+                placeholder={`Pregunta algo sobre "${data.title}"...`}
+                disabled={isAssistantLoading}
+                className="flex-1 px-4 py-2 bg-slate-50 hover:bg-slate-100/50 focus:bg-white border border-slate-200 focus:border-indigo-300 focus:ring-1 focus:ring-indigo-300 text-xs text-slate-800 rounded-xl outline-none transition-all disabled:opacity-50"
+              />
+              <button
+                type="submit"
+                disabled={!inputVal.trim() || isAssistantLoading}
+                className="p-2 sm:px-4 sm:py-2 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-100 text-white disabled:text-slate-400 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 transition-all cursor-pointer disabled:cursor-not-allowed shrink-0"
+              >
+                <Send className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Enviar</span>
+              </button>
+            </form>
           </div>
         )}
       </div>

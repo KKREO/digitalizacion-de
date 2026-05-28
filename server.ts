@@ -24,6 +24,23 @@ const ai = new GoogleGenAI({
   }
 });
 
+// Clean and sanitize the configured model string, bypassing any invalid env placeholders (e.g. "API" or key prefixes)
+function getCleanModel(val?: string, fallback: string = "gemini-3.5-flash"): string {
+  if (!val) return fallback;
+  const lower = val.toLowerCase();
+  
+  if (
+    lower === 'api' || 
+    lower === 'api_key' || 
+    lower.startsWith('aizasy') || 
+    (!lower.includes('gemini') && !lower.includes('imagen') && !lower.includes('veo') && !lower.includes('lyria'))
+  ) {
+    return fallback;
+  }
+  
+  return val.startsWith("models/") ? val.substring(7) : val;
+}
+
 // Primary extraction endpoint
 app.post('/api/extract', async (req, res) => {
   try {
@@ -32,9 +49,9 @@ app.post('/api/extract', async (req, res) => {
       return res.status(400).json({ error: 'Falta el archivo o tipo de archivo (mimeType)' });
     }
 
-    // Read configured model from env, fallback to gemini-3.1-pro-preview
-    const modelId = process.env.GEMINI_MODEL || process.env.VITE_GEMINI_MODEL || "gemini-3.1-pro-preview";
-    const finalModel = modelId.startsWith("models/") ? modelId : `models/${modelId}`;
+    // Read configured model from env, fallback to gemini-3.5-flash
+    const rawModelConfig = process.env.GEMINI_MODEL || process.env.VITE_GEMINI_MODEL || "gemini-3.5-flash";
+    const finalModel = getCleanModel(rawModelConfig, "gemini-3.5-flash");
 
     console.log(`Digitalizando documento con el modelo: ${finalModel}`);
 
@@ -112,6 +129,88 @@ app.post('/api/extract', async (req, res) => {
   }
 });
 
+// Assistant Chat Endpoint
+app.post('/api/assistant/chat', async (req, res) => {
+  try {
+    const { document, messages } = req.body;
+    if (!document) {
+      return res.status(400).json({ error: 'Falta la información del documento.' });
+    }
+    if (!messages || !Array.isArray(messages)) {
+      return res.status(400).json({ error: 'Falta el historial de mensajes o formato incorrecto.' });
+    }
+
+    const rawModelConfig = process.env.GEMINI_MODEL || process.env.VITE_GEMINI_MODEL || "gemini-3.5-flash";
+    const finalModel = getCleanModel(rawModelConfig, "gemini-3.5-flash");
+
+    const documentContext = `
+DOCUMENTO ACTIVO:
+Título: ${document.title}
+Resumen: ${document.summary}
+
+Datos Estructurados:
+${JSON.stringify(document.details, null, 2)}
+
+Contenido Plano / Markdown:
+${document.rawMarkdown}
+`;
+
+    const systemInstruction = `Eres un asistente de digitalización experto e inteligente de DocuDigit. Tu tarea es responder de manera amigable, exacta e informativa a preguntas del usuario basadas EXCLUSIVAMENTE en la información del documento digitalizado que te proveerá el usuario.
+No inventes datos. Si la pregunta del usuario requiere información que no se encuentra o no se puede deducir del documento, indícalo de manera educada diciendo "Esa información no consta en el documento digitalizado disponible."
+Mantén tus respuestas profesionales, claras y al grano en idioma ESPAÑOL. Usa markdown libremente en tus respuestas de chat.`;
+
+    const formattedContents = [];
+    
+    // Provide document context as user message setup
+    formattedContents.push({
+      role: 'user',
+      parts: [{ text: `Aquí tienes la información detallada del documento sobre el cual te haré preguntas de ahora en adelante:\n${documentContext}` }]
+    });
+    
+    formattedContents.push({
+      role: 'model',
+      parts: [{ text: `Entendido perfectamente. He analizado todos los datos, fechas, tablas y el contenido de "${document.title}". Quedo a tu disposición para ayudarte a consultar, resumir o analizar cualquier aspecto de este documento. ¿Qué deseas saber?` }]
+    });
+
+    // Provide past messages
+    for (const msg of messages) {
+      formattedContents.push({
+        role: msg.role === 'assistant' ? 'model' : 'user',
+        parts: [{ text: msg.content }]
+      });
+    }
+
+    const response = await ai.models.generateContent({
+      model: finalModel,
+      contents: formattedContents,
+      config: {
+        systemInstruction: systemInstruction,
+      }
+    });
+
+    const replyText = response.text || '';
+    
+    // Extract token usage metadata safely
+    const usage = response.usageMetadata || (response as any).usage_metadata || {};
+    const tokenStats = {
+      promptTokens: usage.promptTokenCount || (usage as any).prompt_token_count || 0,
+      completionTokens: usage.candidatesTokenCount || (usage as any).candidates_token_count || (usage as any).completion_token_count || 0,
+      totalTokens: usage.totalTokenCount || (usage as any).total_token_count || 0
+    };
+
+    return res.json({
+      reply: replyText,
+      tokenStats: tokenStats,
+      promptSent: `[Contexto del Documento]\n` + systemInstruction + `\n\nPregunta enviada: ` + (messages[messages.length - 1]?.content || '')
+    });
+  } catch (error: any) {
+    console.error("Error en asistente de Gemini:", error);
+    return res.status(500).json({ 
+      error: `Error al consultar al asistente: ${error.message || 'Error desconocido'}` 
+    });
+  }
+});
+
 // Static or Vite setup depending on environment
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(__dirname, 'dist')));
@@ -128,6 +227,10 @@ if (process.env.NODE_ENV === 'production') {
   app.use(vite.middlewares);
 }
 
-app.listen(port, () => {
-  console.log(`[DocuDigit Server] Listening on http://localhost:${port}`);
-});
+if (!process.env.VERCEL) {
+  app.listen(port, () => {
+    console.log(`[DocuDigit Server] Listening on http://localhost:${port}`);
+  });
+}
+
+export default app;

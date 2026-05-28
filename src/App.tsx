@@ -13,7 +13,19 @@ export default function App() {
   const [history, setHistory] = useState<ExtractedData[]>([]);
 
   // Load active model name from environment variables
-  const activeModel = import.meta.env.VITE_GEMINI_MODEL || 'gemini-3.1-pro-preview';
+  const getCleanModel = (val: string) => {
+    const lower = val.toLowerCase();
+    if (
+      lower === 'api' || 
+      lower === 'api_key' || 
+      lower.startsWith('aizasy') || 
+      (!lower.includes('gemini') && !lower.includes('imagen') && !lower.includes('veo') && !lower.includes('lyria'))
+    ) {
+      return 'gemini-3.5-flash';
+    }
+    return val.startsWith("models/") ? val.substring(7) : val;
+  };
+  const activeModel = getCleanModel(import.meta.env.VITE_GEMINI_MODEL || 'gemini-3.5-flash');
 
   // Load history from localStorage on mounting
   useEffect(() => {
