@@ -87,17 +87,19 @@ app.post(/.*extract$/, async (req, res) => {
     const ai = getGeminiClient();
     const response = await ai.models.generateContent({
       model: finalModel,
-      contents: [
-        {
-          inlineData: {
-            data: fileBase64,
-            mimeType: mimeType,
+      contents: {
+        parts: [
+          {
+            inlineData: {
+              data: fileBase64,
+              mimeType: mimeType,
+            },
           },
-        },
-        {
-          text: systemPrompt,
-        },
-      ],
+          {
+            text: systemPrompt,
+          },
+        ],
+      },
       config: {
         responseMimeType: "application/json",
       },

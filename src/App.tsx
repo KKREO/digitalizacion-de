@@ -222,8 +222,19 @@ export default function App() {
             'Por favor, utiliza una imagen o PDF de menor tamaño (máximo 2.0 MB).'
           );
         }
-        const errJson = await response.json().catch(() => ({}));
-        throw new Error(errJson.error || 'Error con el servicio de digitalización');
+        
+        let errorText = '';
+        try {
+          errorText = await response.text();
+        } catch (_) {}
+
+        let errObj: any = {};
+        try {
+          errObj = JSON.parse(errorText);
+        } catch (_) {}
+
+        const backendError = errObj.error || errorText || `Error del servidor (código ${response.status})`;
+        throw new Error(backendError);
       }
 
       const rawJson = await response.json();
