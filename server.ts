@@ -232,8 +232,9 @@ if (process.env.NODE_ENV === 'production' && !process.env.VERCEL) {
     res.sendFile(path.join(__dirname, 'dist', 'index.html'));
   });
 } else if (!process.env.VERCEL) {
-  // ESM import metadata compatibility
-  const { createServer: createViteServer } = await import('vite');
+  // ESM import metadata compatibility with variable to bypass Vercel static analysis
+  const viteModule = 'vite';
+  const { createServer: createViteServer } = await import(viteModule);
   const vite = await createViteServer({
     server: { middlewareMode: true },
     appType: 'spa'
