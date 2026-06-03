@@ -20,7 +20,16 @@ try {
 const app = express();
 const port = 3000;
 
-app.use(express.json({ limit: '50mb' }));
+// On Vercel, the request body is already parsed by Vercel's Serverless helpers.
+// To prevent the express JSON parser from hanging on an already-consumed request stream,
+// we only invoke express.json if req.body is not already parsed.
+app.use((req, res, next) => {
+  if (req.body && typeof req.body === 'object') {
+    next();
+  } else {
+    express.json({ limit: '50mb' })(req, res, next);
+  }
+});
 
 // Lazy init Gemini client with aistudio-build telemetry header
 let aiClient: GoogleGenAI | null = null;
