@@ -23,6 +23,7 @@ interface HistorySidebarProps {
   onDeleteItem: (id: string) => void;
   onClearHistory: () => void;
   activeId?: string;
+  isCloud?: boolean;
 }
 
 export function HistorySidebar({
@@ -30,7 +31,8 @@ export function HistorySidebar({
   onSelectItem,
   onDeleteItem,
   onClearHistory,
-  activeId
+  activeId,
+  isCloud = false
 }: HistorySidebarProps) {
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -44,7 +46,9 @@ export function HistorySidebar({
       <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
         <div className="flex items-center space-x-2">
           <History className="w-4 h-4 text-slate-500" />
-          <h3 className="font-bold text-xs uppercase tracking-wider text-slate-700">Historial Local</h3>
+          <h3 className="font-bold text-xs uppercase tracking-wider text-slate-700">
+            {isCloud ? 'Historial Nube' : 'Historial Local'}
+          </h3>
         </div>
         {history.length > 0 && (
           <button 

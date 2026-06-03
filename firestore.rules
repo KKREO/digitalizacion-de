@@ -1,0 +1,80 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Catch-all Safety Net - default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Reuseable, hardened primitive functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isEmailVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Entity validation helper to prevent update-gaps and shadow fields
+    function isValidDocument(data, isCreate) {
+      return data.id is string
+          && data.id.size() <= 128
+          && data.title is string
+          && data.title.size() <= 512
+          && data.summary is string
+          && data.summary.size() <= 2048
+          && data.rawMarkdown is string
+          && data.rawMarkdown.size() <= 1048576 // up to 1MB markdown content
+          && data.ownerId is string
+          && data.ownerId == request.auth.uid
+          && data.timestamp is int
+          && (isCreate ? (
+              data.keys().hasAll(['id', 'title', 'summary', 'details', 'rawMarkdown', 'ownerId', 'timestamp'])
+              && data.keys().size() >= 7 
+              && data.keys().size() <= 10
+            ) : true);
+    }
+
+    // Rules for our documents collection Path
+    match /documents/{documentId} {
+      // 1. Get - single item fetch. Must be signed in and own the document.
+      allow get: if isSignedIn() && existing().ownerId == request.auth.uid;
+
+      // 2. List - collection query. Must be signed in, and strictly forces client query targeting.
+      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+
+      // 3. Create - document insertion.
+      allow create: if isEmailVerified()
+          && isValidId(documentId)
+          && documentId == incoming().id
+          && isValidDocument(incoming(), true);
+
+      // 4. Update - document mutation grouped into explicit allowed actions.
+      allow update: if isEmailVerified()
+          && isValidId(documentId)
+          && incoming().id == existing().id
+          && incoming().ownerId == existing().ownerId
+          && incoming().timestamp == existing().timestamp
+          && isValidDocument(incoming(), false)
+          && (
+            // Action: Edit fields
+            incoming().diff(existing()).affectedKeys().hasOnly(['title', 'summary', 'details', 'rawMarkdown', 'promptSent', 'tokenStats'])
+          );
+
+      // 5. Delete - document removal.
+      allow delete: if isSignedIn() && existing().ownerId == request.auth.uid;
+    }
+  }
+}

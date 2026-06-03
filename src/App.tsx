@@ -1,9 +1,14 @@
 import { useState, useEffect } from 'react';
-import { Scan, AlertCircle, Loader2, Sparkles } from 'lucide-react';
+import { Scan, AlertCircle, Loader2, Sparkles, LogIn, LogOut, Cloud } from 'lucide-react';
 import { FileUploader } from './components/FileUploader';
 import { DataView, ExtractedData } from './components/DataView';
 import { HistorySidebar } from './components/HistorySidebar';
 import { Toaster, toast } from 'sonner';
+
+// Firebase imports
+import { auth, db, googleProvider, handleFirestoreError, OperationType } from './firebase';
+import { signInWithPopup, signOut, onAuthStateChanged, User } from 'firebase/auth';
+import { collection, query, where, onSnapshot, doc, setDoc, deleteDoc, getDocFromServer } from 'firebase/firestore';
 
 export default function App() {
   const [file, setFile] = useState<File | null>(null);
@@ -11,6 +16,10 @@ export default function App() {
   const [result, setResult] = useState<ExtractedData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<ExtractedData[]>([]);
+
+  // Firebase auth & syncing states
+  const [user, setUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
 
   // Load active model name from environment variables
   const getCleanModel = (val: string) => {
@@ -27,26 +36,107 @@ export default function App() {
   };
   const activeModel = getCleanModel(import.meta.env.VITE_GEMINI_MODEL || 'gemini-3.5-flash');
 
-  // Load history from localStorage on mounting
+  // Validate Connection to Firestore on boot to obey skill guidelines
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem('docudigit_history_v2');
-      if (saved) {
-        setHistory(JSON.parse(saved));
+    async function testConnection() {
+      try {
+        await getDocFromServer(doc(db, 'test', 'connection'));
+      } catch (err) {
+        if (err instanceof Error && err.message.includes('the client is offline')) {
+          console.error("Please check your Firebase configuration.");
+        }
       }
-    } catch (err) {
-      console.error('Error al cargar historial:', err);
     }
+    testConnection();
   }, []);
 
-  // Save history to localStorage on change
+  // Track Firebase auth session changes
   useEffect(() => {
-    try {
-      localStorage.setItem('docudigit_history_v2', JSON.stringify(history));
-    } catch (err) {
-      console.error('Error al guardar historial:', err);
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      setAuthLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Sync historical logs from Firestore or LocalStorage depending on login state
+  useEffect(() => {
+    if (!user) {
+      // Offline/Guest mode
+      try {
+        const saved = localStorage.getItem('docudigit_history_v2');
+        if (saved) {
+          setHistory(JSON.parse(saved));
+        } else {
+          setHistory([]);
+        }
+      } catch (err) {
+        console.error('Error al cargar historial local:', err);
+      }
+      return;
     }
-  }, [history]);
+
+    // Authenticated Mode: Subscribe to real-time Firestore synchronization
+    const q = query(collection(db, 'documents'), where('ownerId', '==', user.uid));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const dbDocs: ExtractedData[] = [];
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        dbDocs.push({
+          id: data.id,
+          title: data.title,
+          summary: data.summary,
+          details: data.details || [],
+          rawMarkdown: data.rawMarkdown,
+          promptSent: data.promptSent,
+          tokenStats: data.tokenStats,
+          timestamp: data.timestamp,
+        });
+      });
+      // Sort in memory to bypass global complex index constraints in Firestore
+      dbDocs.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+      setHistory(dbDocs);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'documents');
+    });
+
+    return () => unsubscribe();
+  }, [user]);
+
+  // Save history to localStorage on change ONLY when guest
+  useEffect(() => {
+    if (!user) {
+      try {
+        localStorage.setItem('docudigit_history_v2', JSON.stringify(history));
+      } catch (err) {
+        console.error('Error al guardar historial local:', err);
+      }
+    }
+  }, [history, user]);
+
+  const handleLogin = async () => {
+    try {
+      await signInWithPopup(auth, googleProvider);
+      toast.success('¡Sesión iniciada con éxito en la nube!');
+    } catch (err: any) {
+      console.error('Error al iniciar sesión:', err);
+      if (err.code !== 'auth/popup-closed-by-user') {
+        toast.error('No se pudo iniciar sesión con Google');
+      }
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      setResult(null);
+      toast.success('Sesión cerrada correctamente');
+    } catch (err) {
+      console.error('Error al cerrar sesión:', err);
+      toast.error('No se pudo cerrar la sesión');
+    }
+  };
+
 
   const handleFileSelect = (selectedFile: File) => {
     setFile(selectedFile);
@@ -245,9 +335,23 @@ export default function App() {
         timestamp: Date.now(),
       };
 
+      if (user) {
+        const recordToSave = {
+          ...newRecord,
+          ownerId: user.uid,
+        };
+        try {
+          await setDoc(doc(db, 'documents', newRecord.id), recordToSave);
+          toast.success('¡Documento digitalizado y respaldado en la nube!');
+        } catch (dbErr) {
+          handleFirestoreError(dbErr, OperationType.CREATE, `documents/${newRecord.id}`);
+        }
+      } else {
+        setHistory((prev) => [newRecord, ...prev]);
+        toast.success('¡Documento procesado y guardado!');
+      }
+
       setResult(newRecord);
-      setHistory((prev) => [newRecord, ...prev]);
-      toast.success('¡Documento procesado y guardado!');
     } catch (err: any) {
       console.error('Error durante la extracción:', err);
       setError(err.message || 'No se pudo digitalizar el documento. Inténtalo de nuevo.');
@@ -257,19 +361,42 @@ export default function App() {
     }
   };
 
-  const deleteHistoryItem = (id: string) => {
-    setHistory((prev) => prev.filter((item) => item.id !== id));
+  const deleteHistoryItem = async (id: string) => {
+    if (user) {
+      try {
+        await deleteDoc(doc(db, 'documents', id));
+        toast.success('Documento eliminado de la nube');
+      } catch (dbErr) {
+        handleFirestoreError(dbErr, OperationType.DELETE, `documents/${id}`);
+      }
+    } else {
+      setHistory((prev) => prev.filter((item) => item.id !== id));
+      toast.success('Documento eliminado del historial');
+    }
     if (result?.id === id) {
       setResult(null);
     }
-    toast.success('Documento eliminado del historial');
   };
 
-  const clearHistory = () => {
+  const clearHistory = async () => {
     if (window.confirm('¿Seguro que deseas borrar todo el historial de digitalizaciones?')) {
-      setHistory([]);
+      if (user) {
+        toast.info('Borrando historial de la nube...');
+        try {
+          for (const item of history) {
+            if (item.id) {
+              await deleteDoc(doc(db, 'documents', item.id));
+            }
+          }
+          toast.success('Historial de la nube borrado por completo');
+        } catch (dbErr) {
+          handleFirestoreError(dbErr, OperationType.DELETE, 'documents');
+        }
+      } else {
+        setHistory([]);
+        toast.success('Historial borrado por completo');
+      }
       setResult(null);
-      toast.success('Historial borrado por completo');
     }
   };
 
@@ -303,10 +430,42 @@ export default function App() {
             </div>
           </div>
 
-          <div className="flex items-center space-x-2 text-xs bg-slate-100 hover:bg-slate-200/80 px-3 py-1.5 rounded-full border border-slate-200 transition-colors">
-            <Sparkles className="w-3.5 h-3.5 text-indigo-500 fill-indigo-500/20" />
-            <span className="font-semibold text-slate-600">Modelo Activo:</span>
-            <span className="font-bold text-indigo-600 select-all">{activeModel}</span>
+          <div className="flex items-center space-x-3">
+            <div className="hidden sm:flex items-center space-x-2 text-xs bg-slate-100 px-3 py-1.5 rounded-full border border-slate-200">
+              <Sparkles className="w-3.5 h-3.5 text-indigo-500 fill-indigo-500/20" />
+              <span className="font-semibold text-slate-600">Modelo:</span>
+              <span className="font-bold text-indigo-600 select-all">{activeModel}</span>
+            </div>
+
+            {authLoading ? (
+              <div className="flex items-center justify-center p-2">
+                <Loader2 className="w-4 h-4 text-slate-400 animate-spin" />
+              </div>
+            ) : user ? (
+              <div className="flex items-center space-x-2">
+                <div className="flex items-center space-x-1.5 bg-emerald-50 text-emerald-800 border border-emerald-100 px-3 py-1.5 rounded-full text-xs font-semibold">
+                  <Cloud className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                  <span className="truncate max-w-[100px] sm:max-w-[140px]">{user.displayName || user.email}</span>
+                </div>
+                <button
+                  onClick={handleLogout}
+                  className="flex items-center gap-1 text-xs font-bold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-2.5 py-1.5 rounded-full border border-slate-200 transition-all cursor-pointer"
+                  title="Cerrar sesión de la nube"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span className="hidden md:inline">Cerrar Sesión</span>
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={handleLogin}
+                className="flex items-center gap-1.5 text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 shadow-sm px-3.5 py-1.5 rounded-full border border-slate-900 transition-all active:scale-[0.98] cursor-pointer"
+                title="Iniciar sesión con Google para respaldar digitalizaciones"
+              >
+                <LogIn className="w-3.5 h-3.5" />
+                <span>Nube</span>
+              </button>
+            )}
           </div>
         </div>
       </header>
@@ -323,6 +482,7 @@ export default function App() {
               onDeleteItem={deleteHistoryItem}
               onClearHistory={clearHistory}
               activeId={result?.id}
+              isCloud={!!user}
             />
           </div>
 
@@ -392,6 +552,7 @@ export default function App() {
                     onDeleteItem={deleteHistoryItem}
                     onClearHistory={clearHistory}
                     activeId={result?.id}
+                    isCloud={!!user}
                   />
                 </div>
               </div>

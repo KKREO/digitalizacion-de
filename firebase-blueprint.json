@@ -1,0 +1,27 @@
+{
+  "entities": {
+    "Document": {
+      "title": "Document",
+      "description": "An extracted and digitized document with summary, details and raw markdown.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "The unique ID of the document" },
+        "title": { "type": "string", "description": "A clear, descriptive title of the document" },
+        "summary": { "type": "string", "description": "Short executive summary of the document contents" },
+        "details": { "type": "array", "description": "Extracted key-value details in a list" },
+        "rawMarkdown": { "type": "string", "description": "Full text of the document cleanly formatted in Spanish Markdown" },
+        "ownerId": { "type": "string", "description": "The Firebase Auth UID of the document's owner" },
+        "timestamp": { "type": "integer", "description": "Epoch timestamp of when the document was digitized" },
+        "promptSent": { "type": "string", "description": "The prompt sent to the LLM (optional)" },
+        "tokenStats": { "type": "object", "description": "Prompt, completion, and total tokens stats (optional)" }
+      },
+      "required": ["id", "title", "summary", "rawMarkdown", "ownerId", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/documents/{documentId}": {
+      "schema": "Document",
+      "description": "User documents and their digitized structures."
+    }
+  }
+}
