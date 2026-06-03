@@ -6,8 +6,16 @@ import { fileURLToPath } from 'url';
 
 dotenv.config();
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+let __filename = '';
+let __dirname = '';
+try {
+  if (typeof import.meta !== 'undefined' && import.meta && import.meta.url) {
+    __filename = fileURLToPath(import.meta.url);
+    __dirname = path.dirname(__filename);
+  }
+} catch (e) {
+  // Fallback for Vercel Serverless environment where import.meta.url is not processed
+}
 
 const app = express();
 const port = 3000;
@@ -226,20 +234,24 @@ Mantén tus respuestas profesionales, claras y al grano en idioma ESPAÑOL. Usa 
 });
 
 // Static or Vite setup depending on environment (disable static file serving on serverless Vercel)
-if (process.env.NODE_ENV === 'production' && !process.env.VERCEL) {
+if (process.env.NODE_ENV === 'production' && !process.env.VERCEL && __dirname) {
   app.use(express.static(path.join(__dirname, 'dist')));
   app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'dist', 'index.html'));
   });
 } else if (!process.env.VERCEL) {
-  // ESM import metadata compatibility with variable to bypass Vercel static analysis
+  // ESM import metadata compatibility with variable inline promise resolution to prevent top-level await
   const viteModule = 'vite';
-  const { createServer: createViteServer } = await import(viteModule);
-  const vite = await createViteServer({
-    server: { middlewareMode: true },
-    appType: 'spa'
+  import(viteModule).then(({ createServer: createViteServer }) => {
+    createViteServer({
+      server: { middlewareMode: true },
+      appType: 'spa'
+    }).then(vite => {
+      app.use(vite.middlewares);
+    });
+  }).catch(err => {
+    console.error("No se pudo cargar el middleware de Vite:", err);
   });
-  app.use(vite.middlewares);
 }
 
 if (!process.env.VERCEL) {
