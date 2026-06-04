@@ -463,7 +463,7 @@ export default function App() {
                 title="Iniciar sesión con Google para respaldar digitalizaciones"
               >
                 <LogIn className="w-3.5 h-3.5" />
-                <span>Nube</span>
+                <span>Iniciar Sesión</span>
               </button>
             )}
           </div>
@@ -483,6 +483,7 @@ export default function App() {
               onClearHistory={clearHistory}
               activeId={result?.id}
               isCloud={!!user}
+              onLogin={handleLogin}
             />
           </div>
 
@@ -500,6 +501,27 @@ export default function App() {
                     Extrae datos estructurados limpios y texto formateado en español con inteligencia artificial de última generación.
                   </p>
                 </div>
+
+                {!user && (
+                  <div className="p-4 bg-gradient-to-r from-indigo-50 to-indigo-100/50 border border-indigo-100 rounded-2xl flex items-center justify-between gap-4 shadow-sm">
+                    <div className="space-y-1">
+                      <p className="text-xs font-bold text-indigo-900 flex items-center gap-1.5">
+                        <Cloud className="w-4 h-4 text-indigo-500 animate-pulse shrink-0" />
+                        ¿Respaldar en la nube?
+                      </p>
+                      <p className="text-[11px] text-indigo-700 leading-relaxed">
+                        Inicia sesión con Google para guardar y sincronizar tu historial de forma segura.
+                      </p>
+                    </div>
+                    <button
+                      onClick={handleLogin}
+                      className="shrink-0 flex items-center gap-1.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 shadow-sm px-3 py-1.5 rounded-xl border border-indigo-600 transition-all active:scale-[0.98] cursor-pointer"
+                    >
+                      <LogIn className="w-3.5 h-3.5" />
+                      <span>Conectar</span>
+                    </button>
+                  </div>
+                )}
 
                 <div className="space-y-4">
                   <FileUploader onFileSelect={handleFileSelect} isLoading={isLoading} />
@@ -553,6 +575,7 @@ export default function App() {
                     onClearHistory={clearHistory}
                     activeId={result?.id}
                     isCloud={!!user}
+                    onLogin={handleLogin}
                   />
                 </div>
               </div>

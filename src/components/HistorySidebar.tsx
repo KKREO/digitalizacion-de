@@ -1,4 +1,4 @@
-import { History, Trash2, Clock, ChevronRight, FileText } from 'lucide-react';
+import { History, Trash2, Clock, ChevronRight, FileText, LogIn } from 'lucide-react';
 import { useState } from 'react';
 
 // Define the ExtractedData interface inside to make it completely self-contained
@@ -24,6 +24,7 @@ interface HistorySidebarProps {
   onClearHistory: () => void;
   activeId?: string;
   isCloud?: boolean;
+  onLogin?: () => void;
 }
 
 export function HistorySidebar({
@@ -32,7 +33,8 @@ export function HistorySidebar({
   onDeleteItem,
   onClearHistory,
   activeId,
-  isCloud = false
+  isCloud = false,
+  onLogin
 }: HistorySidebarProps) {
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -59,6 +61,24 @@ export function HistorySidebar({
           </button>
         )}
       </div>
+
+      {!isCloud && onLogin && (
+        <div className="p-4 bg-indigo-50 border-b border-indigo-100 flex flex-col space-y-2">
+          <p className="text-xs text-indigo-900 font-bold leading-relaxed flex items-center gap-1">
+            <span>☁️</span> ¿Respaldar historial?
+          </p>
+          <p className="text-[11px] text-indigo-700 leading-normal">
+            Inicia sesión con Google para guardar y sincronizar tu historial de forma segura.
+          </p>
+          <button
+            onClick={onLogin}
+            className="w-full h-8 flex items-center justify-center gap-1.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 shadow-sm rounded-lg transition-all cursor-pointer active:scale-[0.98]"
+          >
+            <LogIn className="w-3.5 h-3.5" />
+            <span>Iniciar Sesión</span>
+          </button>
+        </div>
+      )}
 
       {history.length > 0 && (
         <div className="p-3 border-b border-slate-100">
