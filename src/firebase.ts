@@ -1,12 +1,15 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { initializeFirestore } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
 
 // CRITICAL: Must export db with firestoreDatabaseId if provided, so the SDK targets the correct database instance.
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+// Using initializeFirestore with experimentalForceLongPolling ensure robust connection behind iframe/restricted environments.
+export const db = initializeFirestore(app, {
+  experimentalForceLongPolling: true,
+}, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 
