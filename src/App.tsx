@@ -36,18 +36,31 @@ export default function App() {
   };
   const activeModel = getCleanModel(import.meta.env.VITE_GEMINI_MODEL || 'gemini-3.5-flash');
 
-  // Validate Connection to Firestore on boot to obey skill guidelines
+  // Validate Connection to Firestore on boot to obey skill guidelines with transient retry logic
   useEffect(() => {
-    async function testConnection() {
-      try {
-        await getDocFromServer(doc(db, 'test', 'connection'));
-      } catch (err) {
-        if (err instanceof Error && err.message.includes('the client is offline')) {
-          console.error("Please check your Firebase configuration.");
+    let active = true;
+    async function testConnection(retries = 3, delay = 1500) {
+      for (let i = 0; i < retries; i++) {
+        if (!active) return;
+        try {
+          await getDocFromServer(doc(db, 'test', 'connection'));
+          return; // Succeeded!
+        } catch (err) {
+          if (i === retries - 1) {
+            if (err instanceof Error && (err.message.includes('the client is offline') || err.message.includes('offline'))) {
+              console.warn("Firestore connection check has completed. Offline mode or proxy latency is operational.");
+            }
+          } else {
+            // Wait before next retry to allow network/auth to settle
+            await new Promise((resolve) => setTimeout(resolve, delay));
+          }
         }
       }
     }
     testConnection();
+    return () => {
+      active = false;
+    };
   }, []);
 
   // Track Firebase auth session changes

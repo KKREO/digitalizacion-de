@@ -47,6 +47,11 @@ service cloud.firestore {
             ) : true);
     }
 
+    // Rules for our test collection (used to validate connection)
+    match /test/connection {
+      allow read: if true;
+    }
+
     // Rules for our documents collection Path
     match /documents/{documentId} {
       // 1. Get - single item fetch. Must be signed in and own the document.

@@ -7,9 +7,11 @@ const app = initializeApp(firebaseConfig);
 
 // CRITICAL: Must export db with firestoreDatabaseId if provided, so the SDK targets the correct database instance.
 // Using initializeFirestore with experimentalForceLongPolling ensure robust connection behind iframe/restricted environments.
+const dbName = firebaseConfig.firestoreDatabaseId || '(default)';
 export const db = initializeFirestore(app, {
   experimentalForceLongPolling: true,
-}, firebaseConfig.firestoreDatabaseId);
+  useFetchStreams: false,
+} as any, dbName);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 
