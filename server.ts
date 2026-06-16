@@ -6,6 +6,15 @@ import { fileURLToPath } from 'url';
 
 dotenv.config();
 
+// Global crash protection for serverless environments
+process.on('uncaughtException', (err) => {
+  console.error('CRITICAL UNCAUGHT EXCEPTION:', err);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('CRITICAL UNHANDLED REJECTION AT:', promise, 'REASON:', reason);
+});
+
 let __filename = '';
 let __dirname = '';
 try {
@@ -35,9 +44,10 @@ app.use((req, res, next) => {
 let aiClient: GoogleGenAI | null = null;
 function getGeminiClient(): GoogleGenAI {
   if (!aiClient) {
-    const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
+    const rawApiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || '';
+    const apiKey = rawApiKey.trim();
     if (!apiKey) {
-      throw new Error('La variable de entorno GEMINI_API_KEY es requerida. Por favor, asegúrate de configurarla en los ajustes de Vercel.');
+      throw new Error('La variable de entorno GEMINI_API_KEY es requerida. Por favor, asegúrate de configurarla en los ajustes de Vercel (Settings > Environment Variables).');
     }
     aiClient = new GoogleGenAI({
       apiKey: apiKey,
@@ -145,9 +155,12 @@ app.post(/.*extract$/, async (req, res) => {
       totalTokens: usage.totalTokenCount || (usage as any).total_token_count || 0
     };
 
-    // Return extended document model
+    // Return extended document model with deep fallbacks to keep frontend fully safe and stable
     return res.json({
-      ...parsedData,
+      title: parsedData?.title || 'Documento sin título',
+      summary: parsedData?.summary || 'No se pudo generar un resumen ejecutivo de este documento.',
+      details: Array.isArray(parsedData?.details) ? parsedData.details : [],
+      rawMarkdown: parsedData?.rawMarkdown || resultText || '',
       promptSent: `[Archivo Adjunto: ${mimeType}]\n\n${systemPrompt}`,
       tokenStats: tokenStats
     });
