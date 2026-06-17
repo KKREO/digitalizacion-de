@@ -6,14 +6,7 @@ dotenv.config();
 
 const app = express();
 
-// Global crash protection for serverless environments
-process.on('uncaughtException', (err) => {
-  console.error('CRITICAL UNCAUGHT EXCEPTION:', err);
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('CRITICAL UNHANDLED REJECTION AT:', promise, 'REASON:', reason);
-});
+// Let serverless framework manage uncaught rejections and exceptions gracefully
 
 // On Vercel, the request body is already parsed by Vercel's Serverless helpers.
 // To prevent the express JSON parser from hanging on an already-consumed request stream,
@@ -48,7 +41,7 @@ function getGeminiClient(): GoogleGenAI {
 }
 
 // Clean and sanitize the configured model string, bypassing any invalid env placeholders (e.g. "API" or key prefixes)
-function getCleanModel(val?: string, fallback: string = "gemini-3.5-flash"): string {
+function getCleanModel(val?: string, fallback: string = "gemini-2.5-flash"): string {
   if (!val) return fallback;
   const lower = val.toLowerCase();
   
@@ -64,17 +57,17 @@ function getCleanModel(val?: string, fallback: string = "gemini-3.5-flash"): str
   return val.startsWith("models/") ? val.substring(7) : val;
 }
 
-// Primary extraction endpoint (matches any path ending with extract)
-app.post(/.*extract$/, async (req, res) => {
+// Primary extraction logic
+const handleExtractRequest = async (req: express.Request, res: express.Response) => {
   try {
     const { fileBase64, mimeType } = req.body;
     if (!fileBase64 || !mimeType) {
       return res.status(400).json({ error: 'Falta el archivo o tipo de archivo (mimeType)' });
     }
 
-    // Read configured model from env, fallback to gemini-3.5-flash
-    const rawModelConfig = process.env.GEMINI_MODEL || process.env.VITE_GEMINI_MODEL || "gemini-3.5-flash";
-    const finalModel = getCleanModel(rawModelConfig, "gemini-3.5-flash");
+    // Read configured model from env, fallback to gemini-2.5-flash
+    const rawModelConfig = process.env.GEMINI_MODEL || process.env.VITE_GEMINI_MODEL || "gemini-2.5-flash";
+    const finalModel = getCleanModel(rawModelConfig, "gemini-2.5-flash");
 
     console.log(`Digitalizando documento con el modelo: ${finalModel}`);
 
@@ -115,9 +108,6 @@ app.post(/.*extract$/, async (req, res) => {
       },
       config: {
         responseMimeType: "application/json",
-        thinkingConfig: {
-          thinkingBudget: 0,
-        },
       },
     });
 
@@ -159,10 +149,15 @@ app.post(/.*extract$/, async (req, res) => {
       error: `Error al procesar el archivo: ${error.message || 'Error desconocido'}` 
     });
   }
-});
+};
 
-// Assistant Chat Endpoint (matches any path ending with chat)
-app.post(/.*chat$/, async (req, res) => {
+// Bind extraction handles to exact matches and regex wildcard to be ultra robust in all routing configurations
+app.post('/api/extract', handleExtractRequest);
+app.post('/extract', handleExtractRequest);
+app.post(/.*extract$/, handleExtractRequest);
+
+// Assistant Chat logic
+const handleChatRequest = async (req: express.Request, res: express.Response) => {
   try {
     const { document, messages } = req.body;
     if (!document) {
@@ -172,8 +167,8 @@ app.post(/.*chat$/, async (req, res) => {
       return res.status(400).json({ error: 'Falta el historial de mensajes o formato incorrecto.' });
     }
 
-    const rawModelConfig = process.env.GEMINI_MODEL || process.env.VITE_GEMINI_MODEL || "gemini-3.5-flash";
-    const finalModel = getCleanModel(rawModelConfig, "gemini-3.5-flash");
+    const rawModelConfig = process.env.GEMINI_MODEL || process.env.VITE_GEMINI_MODEL || "gemini-2.5-flash";
+    const finalModel = getCleanModel(rawModelConfig, "gemini-2.5-flash");
 
     const documentContext = `
 DOCUMENTO ACTIVO:
@@ -218,9 +213,6 @@ Mantén tus respuestas profesionales, claras y al grano en idioma ESPAÑOL. Usa 
       contents: formattedContents,
       config: {
         systemInstruction: systemInstruction,
-        thinkingConfig: {
-          thinkingBudget: 0,
-        },
       }
     });
 
@@ -245,6 +237,11 @@ Mantén tus respuestas profesionales, claras y al grano en idioma ESPAÑOL. Usa 
       error: `Error al consultar al asistente: ${error.message || 'Error desconocido'}` 
     });
   }
-});
+};
+
+// Bind chat handles to exact matches and regex wildcard to be ultra robust in all routing configurations
+app.post('/api/chat', handleChatRequest);
+app.post('/chat', handleChatRequest);
+app.post(/.*chat$/, handleChatRequest);
 
 export default app;

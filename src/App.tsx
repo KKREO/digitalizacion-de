@@ -30,11 +30,11 @@ export default function App() {
       lower.startsWith('aizasy') || 
       (!lower.includes('gemini') && !lower.includes('imagen') && !lower.includes('veo') && !lower.includes('lyria'))
     ) {
-      return 'gemini-3.5-flash';
+      return 'gemini-2.5-flash';
     }
     return val.startsWith("models/") ? val.substring(7) : val;
   };
-  const activeModel = getCleanModel(import.meta.env.VITE_GEMINI_MODEL || 'gemini-3.5-flash');
+  const activeModel = getCleanModel(import.meta.env.VITE_GEMINI_MODEL || 'gemini-2.5-flash');
 
   // Validate Connection to Firestore on boot to obey skill guidelines with transient retry logic
   useEffect(() => {
